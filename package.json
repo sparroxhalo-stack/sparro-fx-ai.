@@ -1,27 +1,40 @@
 {
-  "name": "workspace",
+  "name": "SparroFXAI",
   "version": "1.0.0",
-  "description": "## Setup in 5 steps",
-  "main": "AlertsScreen.js",
+  "main": "node_modules/expo/AppEntry.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start":         "expo start",
+    "android":       "expo start --android",
+    "ios":           "expo start --ios",
+    "build:android": "eas build --platform android",
+    "build:ios":     "eas build --platform ios"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
-    "@expo/vector-icons": "^15.1.1",
-    "@react-native-async-storage/async-storage": "^3.1.1",
-    "@react-navigation/bottom-tabs": "^7.18.8",
-    "@react-navigation/native": "^7.3.8",
-    "@react-navigation/stack": "^7.10.11",
-    "expo-device": "^57.0.1",
-    "expo-linear-gradient": "^57.0.1",
-    "expo-notifications": "^57.0.5",
-    "expo-status-bar": "^57.0.1",
-    "react": "^19.2.7",
-    "react-native": "^0.86.0",
-    "react-native-gesture-handler": "^3.0.2",
-    "react-native-safe-area-context": "^5.8.0"
-  }
+    "expo":                              "~51.0.0",
+    "expo-status-bar":                   "~1.12.1",
+    "expo-linear-gradient":              "~13.0.2",
+    "expo-notifications":                "~0.28.0",
+    "expo-device":                       "~6.0.2",
+    "expo-constants":                    "~16.0.2",
+    "expo-file-system":                  "~17.0.1",
+    "expo-sharing":                      "~12.0.1",
+    "react":                             "18.2.0",
+    "react-native":                      "0.74.1",
+    "@supabase/supabase-js":             "^2.39.0",
+    "@react-native-async-storage/async-storage": "1.23.1",
+    "axios":                             "^1.6.0",
+    "@react-navigation/native":          "^6.1.9",
+    "@react-navigation/bottom-tabs":     "^6.5.11",
+    "@react-navigation/stack":           "^6.3.20",
+    "react-native-screens":              "~3.31.1",
+    "react-native-safe-area-context":    "4.10.1",
+    "react-native-svg":                  "15.2.0",
+    "@expo/vector-icons":                "^14.0.0",
+    "react-native-reanimated":           "~3.10.1",
+    "react-native-gesture-handler":      "~2.16.1"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.24.0"
+  },
+  "private": true
 }
