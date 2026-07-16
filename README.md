@@ -12,7 +12,7 @@ npm install
 
 **src/services/supabase.js**
 ```js
-const SUPABASE_ANON_KEY = 'your-anon-key-here';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxybWF6aWtxbXJqeGZ2dndtZ3pjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM1MzIzNTQsImV4cCI6MjA5OTEwODM1NH0.zrKPKZwsPcRjIxa0ogTsmUyZtJsEdPUHV8dakw1soyU';
 ```
 
 **src/services/AuthContext.js**
