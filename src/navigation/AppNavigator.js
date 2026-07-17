@@ -19,6 +19,7 @@ import BotScreen         from '../screens/BotScreen';
 import JournalScreen     from '../screens/JournalScreen';
 import PerformanceScreen from '../screens/PerformanceScreen';
 import SettingsScreen    from '../screens/SettingsScreen';
+import PropFirmScreen    from '../screens/PropFirmScreen';
 
 const Tab   = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -31,6 +32,7 @@ const ICON_MAP = {
   Bot:         ['hardware-chip', 'hardware-chip-outline'],
   Journal:     ['journal',       'journal-outline'],
   Performance: ['stats-chart',   'stats-chart-outline'],
+  PropFirms:   ['business',      'business-outline'],
   Settings:    ['settings',      'settings-outline'],
 };
 
@@ -114,6 +116,12 @@ function MainTabs() {
           options={{ headerTitle: '📈 Performance', tabBarLabel: 'Stats' }}
         />
       )}
+
+      <Tab.Screen
+        name="PropFirms"
+        component={PropFirmScreen}
+        options={{ headerTitle: '🏦 Prop Firms', tabBarLabel: 'Prop Firms' }}
+      />
 
       <Tab.Screen
         name="Settings"
