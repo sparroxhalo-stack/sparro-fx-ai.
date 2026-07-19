@@ -1,11 +1,10 @@
 /**
  * signals.js
- * Generates AI forex signals using:
- *   - Real OHLCV price data from Yahoo Finance (via market.js)
- *   - High-impact news events from ForexFactory (via calendar.js)
- *   - Claude (Anthropic) for signal generation and grading
+ * Generates AI forex signals using SMC (Smart Money Concepts) strategy:
+ *   Order Blocks, Fair Value Gaps, Break of Structure, Liquidity sweeps.
  *
- * The Anthropic API key is stored in AsyncStorage (entered in Settings).
+ * Data pipeline:
+ *   Yahoo Finance (real OHLCV) → SMC analysis → Claude Haiku → Trade signal
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -26,72 +25,105 @@ const MODEL         = 'claude-3-haiku-20240307';
 export async function getAnthropicKey() {
   return await AsyncStorage.getItem('anthropicKey');
 }
-
 export async function setAnthropicKey(key) {
   await AsyncStorage.setItem('anthropicKey', key.trim());
 }
 
-// ── Signal generation ────────────────────────────────────────────────────────
+// ── SMC prompt builder ───────────────────────────────────────────────────────
 
-/**
- * Build the Claude prompt from real market data.
- */
+function fmt(val, dec) {
+  return val != null ? Number(val).toFixed(dec) : 'N/A';
+}
+
+function fvgLine(fvg, dec) {
+  return `  [${fvg.type.toUpperCase()} FVG] ${fmt(fvg.bottom, dec)} – ${fmt(fvg.top, dec)} (${fvg.time.slice(11, 16)} UTC)`;
+}
+
+function obLine(ob, dec) {
+  return `  [${ob.type.toUpperCase()} OB] ${fmt(ob.low, dec)} – ${fmt(ob.high, dec)} (${ob.time.slice(11, 16)} UTC)`;
+}
+
 function buildPrompt(market, news) {
-  const { pair, price, candles, rsi, ema20, ema50, trend, swingHigh, swingLow, decimals } = market;
-  const dec = decimals;
+  const { pair, price, candles, dec, rsi, ema20, ema50, trend,
+          swingHigh, swingLow, session, fvgs, orderBlocks,
+          bos, choch, buySideLiquidity, sellSideLiquidity } = market;
 
   const candleLines = candles.slice(-20).map(c =>
-    `  ${c.t.slice(11, 16)} | O:${c.o.toFixed(dec)} H:${c.h.toFixed(dec)} L:${c.l.toFixed(dec)} C:${c.c.toFixed(dec)}`
+    `  ${c.t.slice(11, 16)} O:${fmt(c.o,dec)} H:${fmt(c.h,dec)} L:${fmt(c.l,dec)} C:${fmt(c.c,dec)}`
   ).join('\n');
 
+  const fvgLines = fvgs.length
+    ? fvgs.map(f => fvgLine(f, dec)).join('\n')
+    : '  None detected';
+
+  const obLines = orderBlocks.length
+    ? orderBlocks.map(o => obLine(o, dec)).join('\n')
+    : '  None detected';
+
   const newsLine = news
-    ? `⚠️ UPCOMING NEWS: ${news}\n  → Assess whether this news makes trading high-risk.`
-    : 'No high-impact news in the next 90 minutes.';
+    ? `⚠️  HIGH-IMPACT NEWS: ${news}\n     If event is within 30 min → direction must be WAIT.`
+    : '    No high-impact news in the next 90 minutes.';
 
-  return `You are a professional forex analyst specializing in intraday and swing trading.
-Analyse the following LIVE market data and generate a single trade signal.
+  return `You are a professional SMC (Smart Money Concepts) forex trader specialising in prop firm challenge accounts. Analyse the live data below and produce a single H1 trade signal.
 
-═══ PAIR: ${pair} ═══
-Current Price : ${price.toFixed(dec)}
-Trend (1H)    : ${trend}
+╔══════════════════════════════════════════╗
+║  PAIR: ${pair.padEnd(7)} │ Session: ${session.padEnd(14)} ║
+╚══════════════════════════════════════════╝
+Current Price : ${fmt(price, dec)}
+Trend (H1)    : ${trend}
 RSI(14)       : ${rsi ?? 'N/A'}
-EMA(20)       : ${ema20?.toFixed(dec) ?? 'N/A'}
-EMA(50)       : ${ema50?.toFixed(dec) ?? 'N/A'}
-Swing High    : ${swingHigh.toFixed(dec)}
-Swing Low     : ${swingLow.toFixed(dec)}
+EMA(20)       : ${fmt(ema20, dec)}
+EMA(50)       : ${fmt(ema50, dec)}
 
-Last 20 hourly candles (H1):
+─── MARKET STRUCTURE (SMC) ──────────────────
+Break of Structure : ${bos ?? 'None detected'}
+Change of Character: ${choch ?? 'None detected'}
+Swing High         : ${fmt(swingHigh, dec)}
+Swing Low          : ${fmt(swingLow, dec)}
+
+─── ORDER BLOCKS ────────────────────────────
+${obLines}
+
+─── FAIR VALUE GAPS ─────────────────────────
+${fvgLines}
+
+─── LIQUIDITY ───────────────────────────────
+Buy-side  (equal highs / resting stops above): ${fmt(buySideLiquidity, dec)}
+Sell-side (equal lows  / resting stops below): ${fmt(sellSideLiquidity, dec)}
+
+─── LAST 20 H1 CANDLES ──────────────────────
 ${candleLines}
 
+─── NEWS ────────────────────────────────────
 ${newsLine}
 
-RULES YOU MUST FOLLOW:
-1. Entry must be the CURRENT price (${price.toFixed(dec)}) ± small spread.
-2. SL must be placed beyond the most recent swing high/low. Minimum 15 pips from entry for majors, 100 pips for XAUUSD.
-3. TP1 = 1.5× risk. TP2 = 2.5× risk. TP3 = 4× risk.
-4. Grade A = RSI extreme + EMA crossover + clean S/R + high confidence (≥85%).
-5. Grade B = 2 of those conditions (70–84% confidence).
-6. Grade C = weak setup (<70%). Suggest WAIT if news is imminent or setup is unclear.
-7. Direction WAIT means do not trade right now.
+═══ PROP FIRM RULES YOU MUST FOLLOW ════════
+1. Entry MUST be at current price (${fmt(price, dec)}) ± spread, OR at an unmitigated OB/FVG level price is approaching NOW.
+2. SL MUST go beyond the nearest swing high/low or OB extreme. Min 15 pips for majors, 150 pips for XAUUSD.
+3. TP1 = 1.5× risk. TP2 = 2.5× risk. TP3 = 4× risk (liquidity target).
+4. Grade A (≥85%): Must have ≥2 of: BOS/ChoCh confirmed + unmitigated OB + unfilled FVG + RSI extreme.
+5. Grade B (70-84%): At least 1 strong SMC condition with clean structure.
+6. Grade C (<70%) or WAIT: Unclear structure, news imminent, or no SMC confluence.
+7. "setupType" must be one of: "OB+FVG" | "OB+BOS" | "LiquiditySweep" | "FVGFill" | "OBRetest" | "WAIT"
 
-Respond ONLY with valid JSON (no markdown, no explanation):
+Respond ONLY with valid JSON, no markdown fences:
 {
   "direction":   "BUY" | "SELL" | "WAIT",
-  "entry":       <number>,
+  "setupType":   "OB+FVG" | "OB+BOS" | "LiquiditySweep" | "FVGFill" | "OBRetest" | "WAIT",
+  "entry":       <number — current price or OB/FVG level>,
   "sl":          <number>,
   "tp1":         <number>,
   "tp2":         <number>,
   "tp3":         <number>,
   "grade":       "A" | "B" | "C",
-  "confidence":  <integer 0–100>,
-  "reason":      "<2–3 sentence technical explanation>",
-  "newsWarning": "<news risk message or empty string>"
+  "confidence":  <integer 0-100>,
+  "reason":      "<2-3 sentences: state the SMC setup, structure confirmation, and why this is high-probability>",
+  "newsWarning": "<string or empty>"
 }`;
 }
 
-/**
- * Call Claude directly from the app with the market data prompt.
- */
+// ── Claude call ──────────────────────────────────────────────────────────────
+
 async function callClaude(prompt, apiKey) {
   const res = await fetch(ANTHROPIC_URL, {
     method: 'POST',
@@ -102,90 +134,73 @@ async function callClaude(prompt, apiKey) {
     },
     body: JSON.stringify({
       model:      MODEL,
-      max_tokens: 600,
+      max_tokens: 700,
       messages:   [{ role: 'user', content: prompt }],
     }),
   });
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Anthropic ${res.status}: ${err}`);
-  }
-
-  const json   = await res.json();
-  const text   = json.content?.[0]?.text ?? '';
-
-  // Strip any markdown code fences Claude sometimes wraps around JSON
-  const cleaned = text.replace(/```(?:json)?|```/g, '').trim();
+  if (!res.ok) throw new Error(`Anthropic ${res.status}: ${await res.text()}`);
+  const json    = await res.json();
+  const raw     = json.content?.[0]?.text ?? '';
+  const cleaned = raw.replace(/```(?:json)?|```/g, '').trim();
   return JSON.parse(cleaned);
 }
 
-/**
- * Generate a real AI signal for one pair.
- * Returns signal object or null on failure.
- */
+// ── Public API ───────────────────────────────────────────────────────────────
+
 export async function fetchSignal(pair) {
   try {
     const apiKey = await getAnthropicKey();
-    if (!apiKey) {
-      console.warn('No Anthropic API key — add it in Settings');
-      return null;
-    }
+    if (!apiKey) { console.warn('No Anthropic key'); return null; }
 
-    // Fetch real market data and news in parallel
     const [market, news] = await Promise.all([
       fetchMarketData(pair),
       newsRiskSummary(pair),
     ]);
 
-    const prompt = buildPrompt(market, news);
-    const signal = await callClaude(prompt, apiKey);
-
+    const raw    = await callClaude(buildPrompt(market, news), apiKey);
     return {
       pair,
-      direction:   signal.direction,
-      grade:       signal.grade,
-      confidence:  signal.confidence,
-      entry:       signal.entry,
-      sl:          signal.sl,
-      tp1:         signal.tp1,
-      tp2:         signal.tp2,
-      tp3:         signal.tp3 ?? null,
-      reason:      signal.reason,
-      newsWarning: signal.newsWarning ?? '',
-      price:       market.price,
-      rsi:         market.rsi,
-      ema20:       market.ema20,
-      ema50:       market.ema50,
-      trend:       market.trend,
-      timestamp:   new Date().toISOString(),
+      direction:   raw.direction,
+      setupType:   raw.setupType  ?? '—',
+      grade:       raw.grade,
+      confidence:  raw.confidence,
+      entry:       raw.entry,
+      sl:          raw.sl,
+      tp1:         raw.tp1,
+      tp2:         raw.tp2,
+      tp3:         raw.tp3 ?? null,
+      reason:      raw.reason,
+      newsWarning: raw.newsWarning ?? '',
+      // carry market context for display
+      price:   market.price,
+      rsi:     market.rsi,
+      ema20:   market.ema20,
+      ema50:   market.ema50,
+      trend:   market.trend,
+      session: market.session,
+      bos:     market.bos,
+      fvgs:    market.fvgs,
+      orderBlocks: market.orderBlocks,
+      timestamp: new Date().toISOString(),
     };
   } catch (err) {
-    console.warn(`fetchSignal(${pair}) failed:`, err.message);
+    console.warn(`fetchSignal(${pair}):`, err.message);
     return null;
   }
 }
 
-/**
- * Fetch signals for all pairs in parallel and sort by grade + confidence.
- */
 export async function fetchAllSignals(pairs = PAIRS) {
   const results = await Promise.allSettled(pairs.map(p => fetchSignal(p)));
   return results
     .filter(r => r.status === 'fulfilled' && r.value !== null)
     .map(r => r.value)
     .sort((a, b) => {
-      const gradeRank = { A: 0, B: 1, C: 2 };
-      const gd = (gradeRank[a.grade] ?? 3) - (gradeRank[b.grade] ?? 3);
+      const gr = { A: 0, B: 1, C: 2 };
+      const gd = (gr[a.grade] ?? 3) - (gr[b.grade] ?? 3);
       return gd !== 0 ? gd : b.confidence - a.confidence;
     });
 }
 
-/**
- * Optionally push a signal to Telegram (requires separate backend).
- * Safe to ignore if not using Telegram.
- */
 export async function sendTelegram(signal) {
-  // Implement if you deploy the FastAPI backend to Railway
-  console.log('Telegram push not configured', signal?.pair);
+  console.log('Telegram not configured', signal?.pair);
 }
