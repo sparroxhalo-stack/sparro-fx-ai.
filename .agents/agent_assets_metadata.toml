@@ -12,3 +12,9 @@ id = "vZL9OUjkaBxNqDasCb-6C"
 uri = "file://sparro-backend.zip"
 type = "unspecified"
 title = "Sparro FX AI — Railway Backend"
+
+[[outputs]]
+id = "o-dGkBVcas5TfH8_W0E0T"
+uri = "file://sparro-fx-ai.zip"
+type = "unspecified"
+title = "Sparro FX AI — Full Source Code"
