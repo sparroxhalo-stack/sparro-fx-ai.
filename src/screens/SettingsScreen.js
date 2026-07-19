@@ -4,21 +4,41 @@ import {
   TouchableOpacity, Alert, TextInput,
 } from 'react-native';
 import { useAuth } from '../services/AuthContext';
-import { getAnthropicKey, setAnthropicKey } from '../services/signals';
+import {
+  getAnthropicKey, setAnthropicKey,
+  getGroqKey, setGroqKey, getActiveEngine,
+} from '../services/signals';
 import { colors, fonts, radius } from '../theme';
 
 export default function SettingsScreen() {
   const { user, isPremium, signOut, upgradeToPremium } = useAuth();
   const [upgrading, setUpgrading] = useState(false);
-  const [apiKey, setApiKey]       = useState('');
-  const [keySaved, setKeySaved]   = useState(false);
-  const [showKey, setShowKey]     = useState(false);
+
+  // Groq
+  const [groqKey,       setGroqKeyState]   = useState('');
+  const [groqSaved,     setGroqSaved]      = useState(false);
+  const [showGroqKey,   setShowGroqKey]    = useState(false);
+
+  // Claude (Anthropic)
+  const [apiKey,        setApiKey]         = useState('');
+  const [keySaved,      setKeySaved]       = useState(false);
+  const [showKey,       setShowKey]        = useState(false);
+
+  // Active engine
+  const [activeEngine,  setActiveEngine]   = useState(null);
 
   useEffect(() => {
-    getAnthropicKey().then(k => {
-      if (k) setApiKey(k);
-    });
+    getGroqKey().then(k => { if (k) setGroqKeyState(k); });
+    getAnthropicKey().then(k => { if (k) setApiKey(k); });
+    getActiveEngine().then(e => setActiveEngine(e?.engine ?? null));
   }, []);
+
+  const refreshEngine = async () => {
+    const e = await getActiveEngine();
+    setActiveEngine(e?.engine ?? null);
+  };
+
+  // ── Handlers ────────────────────────────────────────────────────────────────
 
   const handleSignOut = () => {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
@@ -34,6 +54,29 @@ export default function SettingsScreen() {
     Alert.alert('🏆 Premium Activated', 'You now have access to all premium features!');
   };
 
+  // Groq
+  const handleSaveGroq = async () => {
+    if (!groqKey.trim().startsWith('gsk_')) {
+      Alert.alert('Invalid Key', 'Groq API keys start with "gsk_". Check and try again.');
+      return;
+    }
+    await setGroqKey(groqKey.trim());
+    setGroqSaved(true);
+    setTimeout(() => setGroqSaved(false), 2500);
+    await refreshEngine();
+  };
+  const handleRemoveGroq = () => {
+    Alert.alert('Remove Groq Key', 'Signals will fall back to Claude, or stop if no Claude key is set.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Remove', style: 'destructive', onPress: async () => {
+        await setGroqKey('');
+        setGroqKeyState('');
+        await refreshEngine();
+      }},
+    ]);
+  };
+
+  // Claude
   const handleSaveKey = async () => {
     if (!apiKey.trim().startsWith('sk-ant-')) {
       Alert.alert('Invalid Key', 'Anthropic API keys start with "sk-ant-". Check and try again.');
@@ -42,25 +85,47 @@ export default function SettingsScreen() {
     await setAnthropicKey(apiKey.trim());
     setKeySaved(true);
     setTimeout(() => setKeySaved(false), 2500);
+    await refreshEngine();
   };
-
   const handleRemoveKey = () => {
-    Alert.alert('Remove API Key', 'This will remove your Anthropic key. Signals will stop working.', [
+    Alert.alert('Remove Claude Key', 'This will remove your Anthropic key. If no Groq key is set, signals will stop.', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Remove', style: 'destructive', onPress: async () => {
         await setAnthropicKey('');
         setApiKey('');
+        await refreshEngine();
       }},
     ]);
   };
 
-  const maskedKey = apiKey.length > 10
-    ? apiKey.slice(0, 10) + '••••••••••••' + apiKey.slice(-4)
-    : apiKey;
+  // ── Helpers ──────────────────────────────────────────────────────────────────
+  const mask = (key) =>
+    key.length > 10 ? key.slice(0, 10) + '••••••••••••' + key.slice(-4) : key;
+
+  const groqActive    = groqKey.startsWith('gsk_');
+  const claudeActive  = apiKey.startsWith('sk-ant-');
+  const anyKeySet     = groqActive || claudeActive;
+
+  const engineLabel = activeEngine === 'groq'
+    ? '✅ Using Groq (Free) — signals active'
+    : activeEngine === 'claude'
+    ? '✅ Using Claude (Anthropic) — signals active'
+    : '⛔ No AI key — add Groq (free) or Claude key below';
+
+  const engineColor = anyKeySet ? colors.success : colors.danger;
+
+  const aiDataStatus = anyKeySet
+    ? `✅ ${activeEngine === 'groq' ? 'Groq (Free)' : 'Claude (Paid)'} — active`
+    : '⚠️ Key needed';
 
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
       <Text style={styles.title}>⚙️ Settings</Text>
+
+      {/* Active engine banner */}
+      <View style={[styles.engineBanner, { backgroundColor: engineColor + '18', borderColor: engineColor + '40' }]}>
+        <Text style={[styles.engineBannerText, { color: engineColor }]}>{engineLabel}</Text>
+      </View>
 
       {/* Account */}
       <View style={styles.section}>
@@ -79,15 +144,72 @@ export default function SettingsScreen() {
         </View>
       </View>
 
-      {/* Anthropic API Key */}
+      {/* ── Groq (FREE) ────────────────────────────────────────────────────── */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>🤖 AI Engine (Anthropic)</Text>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>⚡ Groq AI — FREE</Text>
+          <View style={styles.freeBadge}><Text style={styles.freeBadgeText}>FREE</Text></View>
+        </View>
         <Text style={styles.apiDesc}>
-          The app calls Claude directly to analyse live prices and generate signals.
-          Your key is stored only on this device — never sent anywhere else.
+          Groq runs Llama 3.3 70B at lightning speed with a generous free tier — no credit card needed.
+          This is the recommended option.
         </Text>
         <Text style={styles.apiLink}>
-          Get a free key at console.anthropic.com → API Keys
+          Get a free key at console.groq.com → API Keys
+        </Text>
+
+        <View style={styles.keyRow}>
+          <TextInput
+            style={styles.keyInput}
+            placeholder="gsk_..."
+            placeholderTextColor={colors.textMuted}
+            value={showGroqKey ? groqKey : mask(groqKey)}
+            onChangeText={setGroqKeyState}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          <TouchableOpacity onPress={() => setShowGroqKey(v => !v)} style={styles.showBtn}>
+            <Text style={styles.showBtnText}>{showGroqKey ? 'Hide' : 'Show'}</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.keyActions}>
+          <TouchableOpacity
+            style={[styles.saveKeyBtn, groqSaved && { backgroundColor: colors.success }]}
+            onPress={handleSaveGroq}
+          >
+            <Text style={styles.saveKeyBtnText}>
+              {groqSaved ? '✅ Saved!' : '💾 Save Groq Key'}
+            </Text>
+          </TouchableOpacity>
+          {groqKey.length > 0 && (
+            <TouchableOpacity style={styles.removeKeyBtn} onPress={handleRemoveGroq}>
+              <Text style={styles.removeKeyText}>Remove</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        <View style={[styles.statusRow, { backgroundColor: groqActive ? colors.success + '15' : colors.border + '40' }]}>
+          <Text style={{ fontSize: fonts.xs, color: groqActive ? colors.success : colors.textMuted, fontWeight: '700' }}>
+            {groqActive ? '✅ Groq key set — will be used for signals' : 'No Groq key set'}
+          </Text>
+        </View>
+      </View>
+
+      {/* ── Claude (PAID) ──────────────────────────────────────────────────── */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>🤖 Claude AI — Backup</Text>
+          <View style={[styles.freeBadge, { backgroundColor: '#ffd20030', borderColor: '#ffd20060' }]}>
+            <Text style={[styles.freeBadgeText, { color: '#ffd200' }]}>PAID</Text>
+          </View>
+        </View>
+        <Text style={styles.apiDesc}>
+          Anthropic Claude Haiku (~$3–8/month). Only used if no Groq key is set.
+          Slightly more powerful but costs money.
+        </Text>
+        <Text style={styles.apiLink}>
+          Get a key at console.anthropic.com → API Keys
         </Text>
 
         <View style={styles.keyRow}>
@@ -95,11 +217,10 @@ export default function SettingsScreen() {
             style={styles.keyInput}
             placeholder="sk-ant-api03-..."
             placeholderTextColor={colors.textMuted}
-            value={showKey ? apiKey : maskedKey}
+            value={showKey ? apiKey : mask(apiKey)}
             onChangeText={setApiKey}
             autoCapitalize="none"
             autoCorrect={false}
-            secureTextEntry={false}
           />
           <TouchableOpacity onPress={() => setShowKey(v => !v)} style={styles.showBtn}>
             <Text style={styles.showBtnText}>{showKey ? 'Hide' : 'Show'}</Text>
@@ -108,11 +229,11 @@ export default function SettingsScreen() {
 
         <View style={styles.keyActions}>
           <TouchableOpacity
-            style={[styles.saveKeyBtn, keySaved && { backgroundColor: colors.success }]}
+            style={[styles.saveKeyBtn, keySaved && { backgroundColor: colors.success }, { backgroundColor: keySaved ? colors.success : '#444' }]}
             onPress={handleSaveKey}
           >
             <Text style={styles.saveKeyBtnText}>
-              {keySaved ? '✅ Saved!' : '💾 Save Key'}
+              {keySaved ? '✅ Saved!' : '💾 Save Claude Key'}
             </Text>
           </TouchableOpacity>
           {apiKey.length > 0 && (
@@ -122,10 +243,13 @@ export default function SettingsScreen() {
           )}
         </View>
 
-        {/* Status */}
-        <View style={[styles.statusRow, { backgroundColor: apiKey.startsWith('sk-ant-') ? colors.success + '15' : colors.danger + '15' }]}>
-          <Text style={{ fontSize: fonts.xs, color: apiKey.startsWith('sk-ant-') ? colors.success : colors.danger, fontWeight: '700' }}>
-            {apiKey.startsWith('sk-ant-') ? '✅ API key configured — signals active' : '⛔ No key — add your Anthropic key above to activate signals'}
+        <View style={[styles.statusRow, { backgroundColor: claudeActive ? colors.success + '15' : colors.border + '40' }]}>
+          <Text style={{ fontSize: fonts.xs, color: claudeActive ? colors.success : colors.textMuted, fontWeight: '700' }}>
+            {claudeActive
+              ? groqActive
+                ? '✅ Claude key set — used as fallback if Groq fails'
+                : '✅ Claude key set — will be used for signals'
+              : 'No Claude key set'}
           </Text>
         </View>
       </View>
@@ -134,9 +258,9 @@ export default function SettingsScreen() {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>📡 Live Data Sources</Text>
         {[
-          ['📈 Price Data',   'Yahoo Finance (real-time OHLCV)',   '✅ Free, no key'],
-          ['📰 News Calendar','ForexFactory via faireconomy.media', '✅ Free, no key'],
-          ['🤖 AI Analysis',  'Anthropic Claude Haiku',            apiKey.startsWith('sk-ant-') ? '✅ Key set' : '⚠️ Key needed'],
+          ['📈 Price Data',    'Yahoo Finance (real-time OHLCV)',   '✅ Free, no key'],
+          ['📰 News Calendar', 'ForexFactory via faireconomy.media', '✅ Free, no key'],
+          ['🤖 AI Analysis',   activeEngine === 'groq' ? 'Groq Llama 3.3 70B' : 'Anthropic Claude Haiku', aiDataStatus],
         ].map(([icon, source, status]) => (
           <View key={source} style={styles.sourceRow}>
             <View style={{ flex: 1 }}>
@@ -181,7 +305,7 @@ export default function SettingsScreen() {
           ['App',           'Sparro FX AI'],
           ['Version',       '2.0.0'],
           ['Pairs',         'EURUSD, GBPUSD, USDJPY, USDCHF, AUDUSD, USDCAD, NZDUSD, GBPJPY, EURJPY, XAUUSD'],
-          ['AI Model',      'Claude 3 Haiku (Anthropic)'],
+          ['AI Engine',     activeEngine === 'groq' ? 'Groq Llama 3.3 70B (Free)' : activeEngine === 'claude' ? 'Claude 3 Haiku (Paid)' : 'Not configured'],
           ['Signal grades', 'A (≥85%) · B (≥70%) · C (<70%)'],
           ['Best sessions', 'London (08–12 UTC) & New York (13–17 UTC)'],
         ].map(([label, value]) => (
@@ -214,12 +338,27 @@ export default function SettingsScreen() {
 
 const styles = StyleSheet.create({
   container:    { flex: 1, backgroundColor: colors.bg, padding: 12 },
-  title:        { fontSize: fonts.xxl, fontWeight: '800', color: colors.text, marginBottom: 16 },
+  title:        { fontSize: fonts.xxl, fontWeight: '800', color: colors.text, marginBottom: 10 },
+
+  engineBanner: {
+    borderRadius: radius.md, borderWidth: 1, padding: 12, marginBottom: 14,
+  },
+  engineBannerText: { fontSize: fonts.sm, fontWeight: '700', textAlign: 'center' },
+
   section:      {
     backgroundColor: colors.card, borderRadius: radius.lg,
     padding: 16, marginBottom: 14, borderWidth: 1, borderColor: colors.border,
   },
-  sectionTitle: { fontSize: fonts.lg, fontWeight: '700', color: colors.text, marginBottom: 12 },
+  sectionHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, gap: 8 },
+  sectionTitle: { fontSize: fonts.lg, fontWeight: '700', color: colors.text },
+
+  freeBadge: {
+    backgroundColor: '#00c85320', borderRadius: 6,
+    paddingHorizontal: 8, paddingVertical: 2,
+    borderWidth: 1, borderColor: '#00c85360',
+  },
+  freeBadgeText: { fontSize: fonts.xs, fontWeight: '800', color: '#00c853' },
+
   infoRow:      {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start',
     paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: colors.border,

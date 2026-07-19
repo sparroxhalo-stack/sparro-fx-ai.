@@ -1,10 +1,13 @@
 /**
  * signals.js
- * Generates AI forex signals using SMC (Smart Money Concepts) strategy:
- *   Order Blocks, Fair Value Gaps, Break of Structure, Liquidity sweeps.
+ * Generates AI forex signals using SMC (Smart Money Concepts) strategy.
  *
- * Data pipeline:
- *   Yahoo Finance (real OHLCV) → SMC analysis → Claude Haiku → Trade signal
+ * AI engines supported:
+ *   1. Groq  (FREE)  — llama-3.3-70b-versatile, OpenAI-compatible API
+ *   2. Claude (PAID) — claude-3-haiku, Anthropic API
+ *
+ * Priority: if a Groq key is set, use Groq. Otherwise fall back to Claude.
+ * User sets keys in Settings screen; stored only on-device via AsyncStorage.
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -18,9 +21,12 @@ export const PAIRS = [
 ];
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
-const MODEL         = 'claude-3-haiku-20240307';
+const ANTHROPIC_MODEL = 'claude-3-haiku-20240307';
 
-// ── API key helpers ──────────────────────────────────────────────────────────
+const GROQ_URL   = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_MODEL = 'llama-3.3-70b-versatile';
+
+// ── Key helpers ──────────────────────────────────────────────────────────────
 
 export async function getAnthropicKey() {
   return await AsyncStorage.getItem('anthropicKey');
@@ -29,16 +35,30 @@ export async function setAnthropicKey(key) {
   await AsyncStorage.setItem('anthropicKey', key.trim());
 }
 
-// ── SMC prompt builder ───────────────────────────────────────────────────────
+export async function getGroqKey() {
+  return await AsyncStorage.getItem('groqKey');
+}
+export async function setGroqKey(key) {
+  await AsyncStorage.setItem('groqKey', key.trim());
+}
+
+// Returns { engine: 'groq'|'claude', key } or null if no key is set
+export async function getActiveEngine() {
+  const groqKey      = await getGroqKey();
+  const anthropicKey = await getAnthropicKey();
+  if (groqKey && groqKey.startsWith('gsk_'))      return { engine: 'groq',   key: groqKey };
+  if (anthropicKey && anthropicKey.startsWith('sk-ant-')) return { engine: 'claude', key: anthropicKey };
+  return null;
+}
+
+// ── Prompt builder ───────────────────────────────────────────────────────────
 
 function fmt(val, dec) {
   return val != null ? Number(val).toFixed(dec) : 'N/A';
 }
-
 function fvgLine(fvg, dec) {
   return `  [${fvg.type.toUpperCase()} FVG] ${fmt(fvg.bottom, dec)} – ${fmt(fvg.top, dec)} (${fvg.time.slice(11, 16)} UTC)`;
 }
-
 function obLine(ob, dec) {
   return `  [${ob.type.toUpperCase()} OB] ${fmt(ob.low, dec)} – ${fmt(ob.high, dec)} (${ob.time.slice(11, 16)} UTC)`;
 }
@@ -122,7 +142,28 @@ Respond ONLY with valid JSON, no markdown fences:
 }`;
 }
 
-// ── Claude call ──────────────────────────────────────────────────────────────
+// ── AI callers ───────────────────────────────────────────────────────────────
+
+async function callGroq(prompt, apiKey) {
+  const res = await fetch(GROQ_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type':  'application/json',
+    },
+    body: JSON.stringify({
+      model:       GROQ_MODEL,
+      max_tokens:  700,
+      temperature: 0.1,
+      messages:    [{ role: 'user', content: prompt }],
+    }),
+  });
+  if (!res.ok) throw new Error(`Groq ${res.status}: ${await res.text()}`);
+  const json    = await res.json();
+  const raw     = json.choices?.[0]?.message?.content ?? '';
+  const cleaned = raw.replace(/```(?:json)?|```/g, '').trim();
+  return JSON.parse(cleaned);
+}
 
 async function callClaude(prompt, apiKey) {
   const res = await fetch(ANTHROPIC_URL, {
@@ -133,7 +174,7 @@ async function callClaude(prompt, apiKey) {
       'content-type':      'application/json',
     },
     body: JSON.stringify({
-      model:      MODEL,
+      model:      ANTHROPIC_MODEL,
       max_tokens: 700,
       messages:   [{ role: 'user', content: prompt }],
     }),
@@ -145,19 +186,24 @@ async function callClaude(prompt, apiKey) {
   return JSON.parse(cleaned);
 }
 
+async function callAI(prompt) {
+  const active = await getActiveEngine();
+  if (!active) throw new Error('NO_KEY');
+  if (active.engine === 'groq')   return callGroq(prompt, active.key);
+  if (active.engine === 'claude') return callClaude(prompt, active.key);
+  throw new Error('Unknown engine');
+}
+
 // ── Public API ───────────────────────────────────────────────────────────────
 
 export async function fetchSignal(pair) {
   try {
-    const apiKey = await getAnthropicKey();
-    if (!apiKey) { console.warn('No Anthropic key'); return null; }
-
     const [market, news] = await Promise.all([
       fetchMarketData(pair),
       newsRiskSummary(pair),
     ]);
 
-    const raw    = await callClaude(buildPrompt(market, news), apiKey);
+    const raw = await callAI(buildPrompt(market, news));
     return {
       pair,
       direction:   raw.direction,
@@ -171,20 +217,20 @@ export async function fetchSignal(pair) {
       tp3:         raw.tp3 ?? null,
       reason:      raw.reason,
       newsWarning: raw.newsWarning ?? '',
-      // carry market context for display
-      price:   market.price,
-      rsi:     market.rsi,
-      ema20:   market.ema20,
-      ema50:   market.ema50,
-      trend:   market.trend,
-      session: market.session,
-      bos:     market.bos,
-      fvgs:    market.fvgs,
+      price:       market.price,
+      rsi:         market.rsi,
+      ema20:       market.ema20,
+      ema50:       market.ema50,
+      trend:       market.trend,
+      session:     market.session,
+      bos:         market.bos,
+      fvgs:        market.fvgs,
       orderBlocks: market.orderBlocks,
-      timestamp: new Date().toISOString(),
+      timestamp:   new Date().toISOString(),
     };
   } catch (err) {
-    console.warn(`fetchSignal(${pair}):`, err.message);
+    if (err.message === 'NO_KEY') console.warn(`fetchSignal(${pair}): No AI key set`);
+    else console.warn(`fetchSignal(${pair}):`, err.message);
     return null;
   }
 }
